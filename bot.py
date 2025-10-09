@@ -1,178 +1,151 @@
-"""
-Fixed bot.py for Eagle Node VPS management.
-
-Features:
-- /deploy (auto-builds ubuntu/debian images if missing)
-- /start, /stop, /restart, /delete, /delete-all
-- /list, /node, /nodedmin, /regen-ssh
-- /port-add and /port-http (basic wrappers)
-- /ping, /help, /bot (manual status refresh)
-- Automatic "Watching EAGLE NODE 🪐 X VPS" presence
-- Uses a simple database file 'database.txt'
-"""
-
-import os, subprocess, sys, asyncio, time, shlex, discord
-from discord.ext import tasks, commands
+import random
+import subprocess
+import os
+import discord
+from discord.ext import commands, tasks
 from discord import app_commands
+import asyncio
+import string
+from datetime import datetime, timedelta
+from typing import Literal
 
-# ===== CONFIG =====
-TOKEN = ""  # <== put your bot token here
-DATABASE_FILE = "database.txt"
-ADMIN_IDS = [1405778722732376176]  # replace with your admin ID(s)
-DEFAULT_RAM_GB, DEFAULT_CPU = 2, 1
-MAX_RAM_GB, MAX_CPU = 200, 24
+TOKEN = ''  # 🧩 Put your bot token here
+database_file = 'database.txt'
+PUBLIC_IP = '138.68.79.95'
+ADMIN_IDS = [1405778722732376176]  # Add your admin IDs here
 
-# ===== Discord setup =====
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix='/', intents=intents)
 
-# --- helpers for database management ---
-def read_db():
-    if not os.path.exists(DATABASE_FILE): return []
-    with open(DATABASE_FILE) as f: return [x.strip() for x in f if x.strip()]
+# ---------------- Helper functions ----------------
 
-def write_db(lines): open(DATABASE_FILE, "w").write("\n".join(lines) + ("\n" if lines else ""))
+def generate_random_string(length=8):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-def add_entry(u, c, ssh, ram, cpu, cr, os_type="ubuntu"):
-    lines = read_db()
-    lines.append(f"{u}|{c}|{ssh}|{ram}|{cpu}|{cr}|{os_type}")
-    write_db(lines)
-
-def remove_entry(c): write_db([x for x in read_db() if f"|{c}|" not in x])
-
-def find_entry(c):
-    for l in read_db():
-        p = l.split("|")
-        if len(p) >= 2 and p[1] == c: return p
+def parse_time_to_seconds(time_str):
+    if not time_str:
+        return None
+    units = {'s':1, 'm':60, 'h':3600, 'd':86400, 'M':2592000, 'y':31536000}
+    unit = time_str[-1]
+    if unit in units and time_str[:-1].isdigit():
+        return int(time_str[:-1]) * units[unit]
+    elif time_str.isdigit():
+        return int(time_str) * 86400
     return None
 
-# --- docker helpers ---
-def ensure_image(img, base):
-    try:
-        if subprocess.check_output(["docker", "images", "-q", img]).strip(): return
-    except: pass
-    dockerfile = f"FROM {base}\nRUN apt update && apt install -y tmate sudo curl wget nano\nCMD ['/bin/bash']"
-    subprocess.run(["docker", "build", "-t", img, "-"], input=dockerfile.encode(), check=True)
+def format_expiry_date(seconds_from_now):
+    if not seconds_from_now:
+        return None
+    expiry_date = datetime.now() + timedelta(seconds=seconds_from_now)
+    return expiry_date.strftime("%Y-%m-%d %H:%M:%S")
 
-def run_container(name, img, ram, cpu):
-    subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    ram, cpu = min(ram, MAX_RAM_GB), min(cpu, MAX_CPU)
-    cmd = ["docker","run","-itd","--privileged","--cap-add=ALL",f"--memory={ram}g",f"--cpus={cpu}","--hostname","eaglenode","--name",name,img]
-    try: return subprocess.check_output(cmd).decode().strip()
-    except subprocess.CalledProcessError: return None
+def add_to_database(user, container_name, ssh_command, ram_limit=None, cpu_limit=None, creator=None, expiry=None, os_type="Ubuntu 22.04"):
+    with open(database_file, 'a') as f:
+        f.write(f"{user}|{container_name}|{ssh_command}|{ram_limit or '2048'}|{cpu_limit or '1'}|{creator or user}|{os_type}|{expiry or 'None'}\n")
 
-async def get_ssh(name, timeout=12):
-    try:
-        proc = await asyncio.create_subprocess_exec("docker","exec",name,"tmate","-F",
-                    stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
-    except: return None
-    start=time.time(); ssh=None
-    while time.time()-start<timeout:
-        l=await proc.stdout.readline()
-        if not l: break
-        t=l.decode(errors="ignore")
-        if "ssh " in t: ssh=t.strip(); break
-    return ssh
+async def capture_ssh_session_line(process):
+    while True:
+        output = await process.stdout.readline()
+        if not output:
+            break
+        output = output.decode('utf-8').strip()
+        if "ssh session:" in output:
+            return output.split("ssh session:")[1].strip()
+    return None
 
-def get_status(name):
-    try: return subprocess.check_output(["docker","inspect","--format","{{.State.Status}}",name]).decode().strip()
-    except subprocess.CalledProcessError: return "not_found"
+def os_type_to_display_name(os_type):
+    return {"ubuntu": "Ubuntu 22.04", "debian": "Debian 12"}.get(os_type, "Unknown OS")
 
-# ====== status updater ======
-@tasks.loop(seconds=5)
-async def update_status():
-    c=len(read_db())
-    s=f"EAGLE NODE 🪐 {c} VPS"
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching,name=s))
+def get_docker_image_for_os(os_type):
+    return {"ubuntu": "ubuntu-22.04-with-tmate", "debian": "debian-with-tmate"}.get(os_type, "ubuntu-22.04-with-tmate")
+
+# ---------------- Bot Ready + Status ----------------
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    update_status.start()
+    change_status.start()
+    print(f"🚀 Bot is ready. Logged in as {bot.user}")
     await bot.tree.sync()
 
-# ====== commands ======
-def is_admin(uid): return int(uid) in ADMIN_IDS
+@tasks.loop(seconds=5)
+async def change_status():
+    try:
+        if os.path.exists(database_file):
+            with open(database_file, 'r') as f:
+                count = len(f.readlines())
+        else:
+            count = 0
+        status = f"🪐 EAGLE NODE {count} VPS"
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
+    except Exception as e:
+        print("Status update error:", e)
 
-@bot.tree.command(name="ping",description="Check bot latency")
-async def ping(i:discord.Interaction):
-    await i.response.send_message(f"🏓 {round(bot.latency*1000)} ms")
+# ---------------- Deploy Command ----------------
 
-@bot.tree.command(name="bot",description="Refresh watching status")
-async def bot_cmd(i:discord.Interaction):
-    c=len(read_db()); s=f"EAGLE NODE 🪐 {c} VPS"
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching,name=s))
-    await i.response.send_message(f"✅ Status set to `{s}`")
+@bot.tree.command(name="deploy", description="🚀 Admin: Deploy a new VPS instance")
+@app_commands.describe(
+    user="The Discord user who will own this VPS",
+    os="Operating System (ubuntu or debian)",
+    ram="RAM allocation in GB (max 200)",
+    cpu="CPU cores (max 100)",
+    expiry="Time until expiry (e.g. 1d, 2h, 30m, 1y)"
+)
+async def deploy(interaction: discord.Interaction, user: discord.User, os: Literal["ubuntu", "debian"], ram: int, cpu: int, expiry: str = None):
+    if interaction.user.id not in ADMIN_IDS:
+        await interaction.response.send_message(embed=discord.Embed(title="❌ Access Denied", description="You don't have permission to use this command.", color=0xff0000), ephemeral=True)
+        return
 
-@bot.tree.command(name="deploy",description="Deploy VPS (admin)")
-async def deploy(i:discord.Interaction, os_type:str="ubuntu", ram:int=2, cpu:int=1, container_name:str=None):
-    if not is_admin(i.user.id): return await i.response.send_message("❌ Admin only",ephemeral=True)
-    await i.response.defer()
-    img="ubuntu-22.04-with-tmate" if os_type=="ubuntu" else "debian-with-tmate"
-    base="ubuntu:22.04" if os_type=="ubuntu" else "debian:12"
-    ensure_image(img,base)
-    if not container_name: container_name=f"{os_type}_{i.user.name}_{int(time.time())}"
-    cid=run_container(container_name,img,ram,cpu)
-    if not cid: return await i.followup.send("❌ Docker failed")
-    ssh=await get_ssh(container_name)
-    add_entry(str(i.user),container_name,ssh or "None",ram,cpu,str(i.user),os_type)
-    await i.followup.send(f"✅ VPS `{container_name}` created.\nSSH: `{ssh or 'pending'}`")
+    ram, cpu = min(ram, 200), min(cpu, 100)
+    expiry_seconds = parse_time_to_seconds(expiry)
+    expiry_date = format_expiry_date(expiry_seconds) if expiry_seconds else None
+    container_name = f"VPS_{user.name.replace(' ', '_')}_{generate_random_string(6)}"
+    image = get_docker_image_for_os(os)
 
-@bot.tree.command(name="list",description="List your VPS")
-async def list_cmd(i:discord.Interaction):
-    user=str(i.user); lines=[l for l in read_db() if l.startswith(user+"|")]
-    if not lines: return await i.response.send_message("📋 none")
-    e=discord.Embed(title=f"{i.user.name}'s VPS",color=0x00aaff)
-    for l in lines:
-        p=l.split("|"); n=p[1]; s=get_status(n)
-        e.add_field(name=f"{n} ({s})",value=f"RAM {p[3]}GB CPU {p[4]} SSH `{p[2]}`",inline=False)
-    await i.response.send_message(embed=e)
+    embed = discord.Embed(
+        title="⚙️ Creating VPS Instance",
+        description=f"👤 **User:** {user.mention}\n🐧 **OS:** {os_type_to_display_name(os)}\n💾 **RAM:** {ram} GB\n🔥 **CPU:** {cpu} cores\n⌚ **Expiry:** {expiry_date or 'None'}",
+        color=0x2400ff
+    )
+    await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="delete",description="Delete VPS")
-async def delete_cmd(i:discord.Interaction, container_name:str):
-    e=find_entry(container_name)
-    if not e: return await i.response.send_message("❌ not found")
-    if e[0]!=str(i.user) and not is_admin(i.user.id): return await i.response.send_message("❌ denied")
-    subprocess.run(["docker","rm","-f",container_name])
-    remove_entry(container_name)
-    await i.response.send_message(f"✅ Deleted `{container_name}`")
+    try:
+        container_id = subprocess.check_output([
+            "docker", "run", "-itd",
+            "--privileged", "--cap-add=ALL",
+            f"--memory={ram}g", f"--cpus={cpu}",
+            "--hostname", "eaglenode",
+            "--name", container_name,
+            image
+        ]).decode().strip()
 
-@bot.tree.command(name="delete-all",description="Admin: delete all VPS")
-async def delete_all(i:discord.Interaction):
-    if not is_admin(i.user.id): return await i.response.send_message("❌ denied",ephemeral=True)
-    for l in read_db():
-        try: subprocess.run(["docker","rm","-f",l.split('|')[1]])
-        except: pass
-    write_db([]); await i.response.send_message("🗑️ All VPS removed")
+        exec_cmd = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_name, "tmate", "-F",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        ssh_session_line = await capture_ssh_session_line(exec_cmd)
+        if not ssh_session_line:
+            raise Exception("Failed to get SSH session line.")
 
-@bot.tree.command(name="start",description="Start VPS")
-async def start_cmd(i:discord.Interaction,container_name:str):
-    subprocess.run(["docker","start",container_name])
-    ssh=await get_ssh(container_name)
-    await i.response.send_message(f"✅ Started `{container_name}` SSH `{ssh or 'none'}`")
+        add_to_database(str(user), container_name, ssh_session_line, ram, cpu, str(interaction.user), expiry_date, os_type_to_display_name(os))
 
-@bot.tree.command(name="stop",description="Stop VPS")
-async def stop_cmd(i:discord.Interaction,container_name:str):
-    subprocess.run(["docker","stop",container_name]); await i.response.send_message(f"⏹️ Stopped `{container_name}`")
+        dm = discord.Embed(title="✅ VPS Deployed Successfully", description="Your VPS is ready! Here are your details:", color=0x2400ff)
+        dm.add_field(name="💾 RAM", value=f"{ram} GB")
+        dm.add_field(name="🔥 CPU", value=f"{cpu} cores")
+        dm.add_field(name="🐧 OS", value=os_type_to_display_name(os))
+        dm.add_field(name="🔑 SSH Command", value=f"```{ssh_session_line}```", inline=False)
+        dm.add_field(name="💠 Container Name", value=container_name, inline=False)
+        dm.set_footer(text="🔒 Powered by EAGLE NODE")
 
-@bot.tree.command(name="restart",description="Restart VPS")
-async def restart_cmd(i:discord.Interaction,container_name:str):
-    subprocess.run(["docker","restart",container_name])
-    ssh=await get_ssh(container_name)
-    await i.response.send_message(f"🔄 Restarted `{container_name}` SSH `{ssh or 'none'}`")
+        try:
+            await user.send(embed=dm)
+        except discord.Forbidden:
+            await interaction.followup.send(f"⚠️ Cannot DM {user.mention} (DMs closed).")
 
-@bot.tree.command(name="help",description="Show help")
-async def help_cmd(i:discord.Interaction):
-    txt=("**Commands**\n"
-         "/deploy – deploy VPS (admin)\n"
-         "/start /stop /restart /delete /list\n"
-         "/delete-all (admin)\n"
-         "/bot – refresh status\n"
-         "/ping – latency\n")
-    await i.response.send_message(txt)
+        await interaction.followup.send(embed=discord.Embed(title="🎉 VPS Created", description=f"VPS successfully created for {user.mention}", color=0x00ff00))
 
-if __name__ == "__main__":
-    if not TOKEN:
-        print("❌ Please add your bot token in TOKEN variable.")
-        sys.exit(1)
-    bot.run(TOKEN)
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Deployment Failed", description=f"Error: {e}", color=0xff0000))
+
+# ---------------- Run ----------------
+bot.run(TOKEN)
+    
