@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 # ---------------- CONFIG ----------------
-TOKEN = ""   # 🧩 Your bot token
+TOKEN = ""   # 🧩 Add your Discord Bot Token here
 ADMIN_IDS = [1405778722732376176]
 database_file = "database.txt"
 # ----------------------------------------
@@ -27,9 +27,11 @@ def parse_time(s):
     if u in m and n.isdigit(): return int(n)*m[u]
     if s.isdigit(): return int(s)*86400
     return None
+
 def expiry_fmt(sec): 
     if not sec: return None
     return (datetime.now()+timedelta(seconds=sec)).strftime("%Y-%m-%d %H:%M:%S")
+
 async def capture_tmate(proc):
     while True:
         l=await proc.stdout.readline()
@@ -37,9 +39,11 @@ async def capture_tmate(proc):
         l=l.decode().strip()
         if "ssh session:" in l: return l.split("ssh session:")[1].strip()
     return None
+
 def save_db(u,c,s,ram,cpu,creator,exp,os):
     with open(database_file,"a") as f:
         f.write(f"{u}|{c}|{s}|{ram}|{cpu}|{creator}|{os}|{exp or 'None'}\n")
+
 def all_db():
     return open(database_file).read().splitlines() if os.path.exists(database_file) else []
 
@@ -69,36 +73,69 @@ async def deploy(inter, user:discord.User, os:Literal["ubuntu","debian"], ram:in
     secs=parse_time(expiry); exp=expiry_fmt(secs)
     cname=f"VPS_{user.name}_{randstr()}"
     img=docker_image(os)
+
     emb=discord.Embed(title="⚙️ Creating VPS",description=f"👤 {user.mention}\n🐧 {os_name(os)}\n💾 {ram} GB RAM  🔥{cpu} CPU\n⌚ Expiry {exp or 'None'}",color=0x2400ff)
     await inter.response.send_message(embed=emb)
+
     try:
-        cid=subprocess.check_output([
-            "docker","run","-itd","--privileged","--cap-add=ALL",
-            f"--memory={ram}g",f"--cpus={cpu}","--hostname","eaglenode","--name",cname,img
-        ]).decode().strip()
+        docker_cmd = [
+            "docker", "run", "-itd",
+            "--privileged", "--cap-add=ALL",
+            f"--memory={ram}g",
+            "--hostname", "eaglenode",
+            "--name", cname
+        ]
+        # 🧩 Debian CPU fix
+        if os == "debian":
+            docker_cmd.append(f"--cpuset-cpus=0-{max(cpu-1,0)}")
+        else:
+            docker_cmd.append(f"--cpus={cpu}")
+        docker_cmd.append(img)
+
+        try:
+            cid = subprocess.check_output(docker_cmd, stderr=subprocess.STDOUT).decode().strip()
+        except subprocess.CalledProcessError:
+            if os == "debian":
+                print("⚠️ Debian failed with CPU limits. Retrying without CPU flags...")
+                cid = subprocess.check_output([
+                    "docker","run","-itd",
+                    "--privileged","--cap-add=ALL",
+                    f"--memory={ram}g",
+                    "--hostname","eaglenode",
+                    "--name",cname,
+                    img
+                ]).decode().strip()
+            else:
+                raise
+
         proc=await asyncio.create_subprocess_exec("docker","exec",cname,"tmate","-F",
             stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
         ssh=await capture_tmate(proc)
         if not ssh: raise Exception("SSH not generated")
+
         save_db(str(user),cname,ssh,ram,cpu,str(inter.user),exp,os_name(os))
+
         dm=discord.Embed(title="✅ VPS Ready",description="Your VPS details:",color=0x2400ff)
-        dm.add_field(name="💾 RAM",value=f"{ram} GB"); dm.add_field(name="🔥 CPU",value=f"{cpu}")
-        dm.add_field(name="🐧 OS",value=os_name(os)); dm.add_field(name="🔑 SSH",value=f"```{ssh}```",inline=False)
+        dm.add_field(name="💾 RAM",value=f"{ram} GB")
+        dm.add_field(name="🔥 CPU",value=f"{cpu}")
+        dm.add_field(name="🐧 OS",value=os_name(os))
+        dm.add_field(name="🔑 SSH",value=f"```{ssh}```",inline=False)
         dm.add_field(name="💠 Container",value=cname,inline=False)
         dm.set_footer(text="🔒 Powered by EAGLE NODE")
         try: await user.send(embed=dm)
         except: await inter.followup.send(f"⚠️ DM closed for {user.mention}")
         await inter.followup.send(f"🎉 VPS created for {user.mention}")
+
     except Exception as e:
         await inter.followup.send(f"❌ Error: {e}")
 
-# --- Admin ---
-@bot.tree.command(name="delete", description="🗑️ Admin: Delete VPS by container name")
-async def delete(inter, container_name:str):
+# --- Admin Commands ---
+@bot.tree.command(name="delete-user-container", description="🗑️ Admin: Delete user VPS by container ID")
+async def delete_user_container(inter, container_id:str):
     if not is_admin(inter.user.id): return await inter.response.send_message("❌ No permission",ephemeral=True)
     try:
-        subprocess.run(["docker","rm","-f",container_name],check=True)
-        await inter.response.send_message(f"✅ Deleted `{container_name}`")
+        subprocess.run(["docker","rm","-f",container_id],check=True)
+        await inter.response.send_message(f"✅ Deleted `{container_id}`")
     except Exception as e: await inter.response.send_message(f"❌ {e}")
 
 @bot.tree.command(name="remove", description="🧹 Admin: Force remove container by ID")
@@ -109,13 +146,74 @@ async def remove(inter, container_id:str):
         await inter.response.send_message(f"✅ Removed `{container_id}`")
     except Exception as e: await inter.response.send_message(f"❌ {e}")
 
+@bot.tree.command(name="list-all", description="📊 Admin: Show all VPS containers with usage overview")
+async def list_all(inter):
+    if not is_admin(inter.user.id):
+        return await inter.response.send_message("❌ No permission", ephemeral=True)
+
+    cpu_usage = subprocess.getoutput("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'")
+    mem_total = subprocess.getoutput("free -h | awk '/Mem:/ {print $2}'")
+    mem_used = subprocess.getoutput("free -h | awk '/Mem:/ {print $3}'")
+    disk_usage = subprocess.getoutput("df -h / | awk 'NR==2 {print $3\" / \"$2}'")
+
+    containers_output = subprocess.getoutput("docker ps -a --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}'")
+    containers = containers_output.strip().splitlines()
+
+    total_instances = len(containers)
+    overview = discord.Embed(
+        title=f"📊 System Overview – All Instances ({total_instances} total)",
+        color=0x00ff88
+    )
+    overview.add_field(name="🟢 CPU Usage", value=f"{cpu_usage.strip()} %", inline=False)
+    overview.add_field(name="🟢 Memory", value=f"{mem_used} / {mem_total}", inline=False)
+    overview.add_field(name="🟢 Disk", value=disk_usage.strip(), inline=False)
+
+    await inter.response.send_message(embed=overview)
+    if not containers:
+        return
+
+    details = ""
+    for line in containers:
+        cid, name, status, image = line.split("|")
+        owner = "Unknown"
+        os_name_display = "Unknown"
+
+        for entry in all_db():
+            parts = entry.split("|")
+            if len(parts) > 1 and parts[1] == name:
+                owner = parts[0]
+                os_name_display = parts[6]
+                break
+
+        running = "🟢 Running" if "Up" in status else "🔴 Stopped"
+        stats = subprocess.getoutput(f"docker stats {name} --no-stream --format '{{{{.CPUPerc}}}}|{{{{.MemUsage}}}}'")
+        cpu_perc, mem_usage = ("0%", "0B / 0B")
+        if "|" in stats:
+            cpu_perc, mem_usage = stats.split("|", 1)
+
+        details += (
+            f"\n🖥️ **Instance `{cid[:12]}`**\n"
+            f"▫️ **Owner**: `{owner}`\n"
+            f"▫️ **OS**: {os_name_display}\n"
+            f"▫️ **Status**: {running}\n"
+            f"▫️ **CPU**: {cpu_perc.strip()}\n"
+            f"▫️ **RAM**: {mem_usage.strip()}\n"
+        )
+
+        if len(details) > 1800:
+            await inter.followup.send(f"```markdown\n{details}\n```")
+            details = ""
+
+    if details:
+        await inter.followup.send(f"```markdown\n{details}\n```")
+
 @bot.tree.command(name="node", description="📊 Admin: Show node info")
 async def node(inter):
     if not is_admin(inter.user.id): return await inter.response.send_message("❌ No permission",ephemeral=True)
     info=subprocess.getoutput("free -h && df -h / && uptime")
     await inter.response.send_message(f"```\n{info}\n```")
 
-# --- User ---
+# --- User Commands ---
 @bot.tree.command(name="list", description="📋 List your VPS containers")
 async def list_vps(inter):
     user=str(inter.user)
