@@ -1,3 +1,4 @@
+# v1.py - updated by assistant
 import random
 import logging
 import subprocess
@@ -16,7 +17,7 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Literal
 
-TOKEN = ''
+TOKEN = 'YOUR_DISCORD_BOT_TOKEN'
 RAM_LIMIT = '6g'
 SERVER_LIMIT = 1
 database_file = 'database.txt'
@@ -191,7 +192,6 @@ def get_container_id_from_database(user, container_name=None):
     return None
 
 # OS Selection dropdown for deploy command
-# OS Selection dropdown for deploy command
 class OSSelectView(View):
     def __init__(self, callback):
         super().__init__(timeout=60)
@@ -214,7 +214,6 @@ class OSSelectView(View):
         await interaction.response.defer()
         await self.callback(interaction, selected_os)
 
-# Confirmation dialog class for delete operations
 # Confirmation dialog class for delete operations
 class ConfirmView(View):
     def __init__(self, container_id, container_name, is_delete_all=False):
@@ -320,15 +319,15 @@ async def on_ready():
 @tasks.loop(seconds=5)
 async def change_status():
     try:
+        # Count how many VPS entries exist
+        instance_count = 0
         if os.path.exists(database_file):
             with open(database_file, 'r') as f:
-                lines = f.readlines()
-                instance_count = len(lines)
-        else:
-            instance_count = 0
+                instance_count = len(f.readlines())
 
-        status = f" LP NODES {instance_count} VPS"
-        await bot.change_presence(activity=discord.Game(name=status))
+        # Status: Watching EAGLENODE | X VPS
+        status = f"EAGLENODE | {instance_count} VPS"
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
     except Exception as e:
         print(f"Failed to update status: {e}")
 
@@ -551,7 +550,7 @@ async def start_server(interaction: discord.Interaction, container_name: str):
 
     try:
         subprocess.run(["docker", "start", container_id], check=True)
-        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_id, "tmate", "-F",
+        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_name, "tmate", "-F",
                                                         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         ssh_session_line = await capture_ssh_session_line(exec_cmd)
         
@@ -835,18 +834,19 @@ async def port_forward_website(interaction: discord.Interaction, container_name:
         )
         await interaction.followup.send(embed=error_embed)
 
+# Deploy command now has sane defaults & mapping
 @bot.tree.command(name="deploy", description="🚀 Admin: Deploy a new VPS instance")
 @app_commands.describe(
-    ram="RAM allocation in GB (max 100gb)",
-    cpu="CPU cores (max 24)",
+    ram="RAM allocation in GB (max 100GB)",
+    cpu="CPU cores (max 32). If 0 or not provided, CPU will be auto-assigned from RAM.",
     target_user="Discord user ID to assign the VPS to",
     container_name="Custom container name (default: auto-generated)",
     expiry="Time until expiry (e.g. 1d, 2h, 30m, 45s, 1y, 3M)"
 )
 async def deploy(
     interaction: discord.Interaction, 
-    ram: int = 16073727272727272827200, 
-    cpu: int = 40, 
+    ram: int = 4, 
+    cpu: int = 0, 
     target_user: str = None,
     container_name: str = None,
     expiry: str = None
@@ -861,12 +861,49 @@ async def deploy(
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
-    # Validate parameters
-    if ram > 160027277272727272720:
-        ram = 90002772727272727370
-    if cpu > 4072727:
-        cpu = 926260
-    
+    # Validate parameters & apply presets
+    def match_cpu_to_ram(ram_value):
+        # Presets:
+        # 12 -> 4
+        # 24 -> 6
+        # 28 -> 6
+        # 32 -> 8
+        # 38 -> 8
+        # 42 -> 10
+        # 56 -> 10
+        if ram_value <= 12:
+            return 4
+        elif ram_value <= 24:
+            return 6
+        elif ram_value <= 28:
+            return 6
+        elif ram_value <= 32:
+            return 8
+        elif ram_value <= 38:
+            return 8
+        elif ram_value <= 42:
+            return 10
+        elif ram_value <= 56:
+            return 10
+        else:
+            return 12  # fallback for very large RAM
+
+    # Clamp RAM
+    if ram < 1:
+        ram = 4
+    elif ram > 100:
+        ram = 100
+
+    # CPU auto-assign if cpu <= 0
+    if cpu is None or cpu < 1:
+        cpu = match_cpu_to_ram(ram)
+    else:
+        # clamp cpu
+        if cpu < 1:
+            cpu = 1
+        elif cpu > 32:
+            cpu = 32
+
     # Set target user
     user_id = target_user if target_user else str(interaction.user.id)
     user = target_user if target_user else str(interaction.user)
@@ -911,13 +948,14 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
     image = get_docker_image_for_os(os_type)
     
     try:
-        # Create container with resource limits
+        # Create container with resource limits and hostname
         container_id = subprocess.check_output([
             "docker", "run", "-itd", 
             "--privileged", 
             "--cap-add=ALL",
             f"--memory={ram}g",
             f"--cpus={cpu}",
+            "--hostname", "eaglenode",
             "--name", container_name,
             image
         ]).strip().decode('utf-8')
