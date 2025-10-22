@@ -23,7 +23,7 @@ database_file = 'database.txt'
 PUBLIC_IP = '138.68.79.95'
 
 # Admin user IDs - add your admin user IDs here
-ADMIN_IDS = [1368602087520473140]  # Replace with actual admin IDs
+ADMIN_IDS = [1405778722732376176]  # Replace with actual admin IDs
 
 intents = discord.Intents.default()
 intents.messages = False
@@ -430,7 +430,7 @@ async def node_stats(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="📊 Panel Node Dashboard",
-        description="📡 lp nodes",
+        description="📡 EAGLENODE",
         color=0x2400ff
     )
     
@@ -972,7 +972,7 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         dm_embed.add_field(name="🔥 CPU Cores", value=f"{cpu} cores", inline=True)
         dm_embed.add_field(name="🧊 Container Name", value=container_name, inline=False)
         dm_embed.add_field(name="💾 Storage", value=f"10000 GB (Shared storage)", inline=True)
-        dm_embed.add_field(name="🔒 Password", value="lpnodes", inline=False)
+        dm_embed.add_field(name="🔒 Password", value="eaglenode", inline=False)
         
         dm_embed.set_footer(text="Keep this information safe and private!")
         
