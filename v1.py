@@ -1031,75 +1031,6 @@ def get_docker_image_for_os(os_type):
     return os_map.get(os_type, "ubuntu-22.04-with-tmate")
 
 # Tips navigation view
-class TipsView(View):
-    def __init__(self):
-        super().__init__(timeout=300)  # 5 minute timeout
-        self.current_page = 0
-        self.tips = [
-            {
-                "title": "🔑 SSH Connection Tips",
-                "description": "• Use `ssh-keygen` to create SSH keys for passwordless login\n"
-                              "• Forward ports with `-L` flag: `ssh -L 8080:localhost:80 user@host`\n"
-                              "• Keep connections alive with `ServerAliveInterval=60` in SSH config\n"
-                              "• Use `tmux` or `screen` to keep sessions running after disconnect"
-            },
-            {
-                "title": "🛠️ System Management",
-                "description": "• Update packages regularly: `apt update && apt upgrade`\n"
-                              "• Monitor resources with `htop` or `top`\n"
-                              "• Check disk space with `df -h`\n"
-                              "• View logs with `journalctl` or check `/var/log/`"
-            },
-            {
-                "title": "🌐 Web Hosting Tips",
-                "description": "• Install Nginx or Apache for web hosting\n"
-                              "• Secure with Let's Encrypt for free SSL certificates\n"
-                              "• Use PM2 to manage Node.js applications\n"
-                              "• Set up proper firewall rules with `ufw`"
-            },
-            {
-                "title": "📊 Performance Optimization",
-                "description": "• Limit resource-intensive processes\n"
-                              "• Use caching for web applications\n"
-                              "• Configure swap space for low-memory situations\n"
-                              "• Optimize database queries and indexes"
-            },
-            {
-                "title": "🔒 Security Best Practices",
-                "description": "• Change default passwords immediately\n"
-                              "• Disable root SSH login\n"
-                              "• Keep software updated\n"
-                              "• Use `fail2ban` to prevent brute force attacks\n"
-                              "• Regularly backup important data"
-            }
-        ]
-    
-    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary)
-    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page = (self.current_page - 1) % len(self.tips)
-        await interaction.response.edit_message(embed=self.get_current_embed(), view=self)
-    
-    @discord.ui.button(label="▶️ Next", style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page = (self.current_page + 1) % len(self.tips)
-        await interaction.response.edit_message(embed=self.get_current_embed(), view=self)
-    
-    def get_current_embed(self):
-        tip = self.tips[self.current_page]
-        embed = discord.Embed(
-            title=tip["title"],
-            description=tip["description"],
-            color=0x00aaff
-        )
-        embed.set_footer(text=f"Tip {self.current_page + 1}/{len(self.tips)}")
-        return embed
-
-@bot.tree.command(name="tips", description="💡 Shows useful tips for managing your VPS")
-async def tips_command(interaction: discord.Interaction):
-    view = TipsView()
-    embed = view.get_current_embed()
-    await interaction.response.send_message(embed=embed, view=view)
-
 @bot.tree.command(name="delete", description="Delete your VPS instance")
 @app_commands.describe(container_name="The name of your container")
 async def delete_server(interaction: discord.Interaction, container_name: str):
@@ -1360,7 +1291,7 @@ async def create(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def send_vps_request(interaction, user, method, reward, count):
-    channel = bot.get_channel(1390545538239299608)
+    channel = bot.get_channel(1406277907487133737)
     if not channel:
         await interaction.response.send_message("❌ VPS channel not found.", ephemeral=True)
         return
