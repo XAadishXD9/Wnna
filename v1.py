@@ -26,7 +26,7 @@ PUBLIC_IP = '138.68.79.95'
 
 # Admin user IDs - add your admin user IDs here
 # 👑 Admin user IDs
-ADMIN_IDS = [1405778722732376176 , 1273245674531717156]  # Replace with actual admin IDs
+ADMIN_IDS = [1405778722732376176]  # Replace with actual admin IDs
 
 intents = discord.Intents.default()
 intents.messages = False
@@ -331,7 +331,7 @@ async def change_status():
         else:
             instance_count = 0
 
-        status = f" LP NODES {instance_count} VPS"
+        status = f" ZX NODES {instance_count} VPS"
         await bot.change_presence(activity=discord.Game(name=status))
     except Exception as e:
         print(f"Failed to update status: {e}")
@@ -435,7 +435,7 @@ async def node_stats(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="📊 Panel Node Dashboard",
-        description="📡 ZX NODES",
+        description="📡 Zx nodes",
         color=0x2400ff
     )
     
@@ -899,31 +899,41 @@ async def deploy(
     view = OSSelectView(os_selected_callback)
     await interaction.response.send_message(embed=embed, view=view)
 
+
 async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, container_name, expiry_date):
-    # Prepare response
+    if not ram or ram <= 0:
+        ram = 1
+    if not cpu or cpu <= 0:
+        cpu = 1
+
     embed = discord.Embed(
         title="⚙️ Creating VM",
-        description=f"**💾 RAM: {ram}GB\n**"
-                    f"**🔥 CPU: {cpu} cores\n**"
-                    f" 🧊**OS:** {os_type}\n"
-                    f"**🧊 conatiner name: {user}\n**"
-                    f"**⌚ Expiry: {expiry_date if expiry_date else 'None'}**",
+        description=(
+            f"💾 **RAM:** {ram}GB
+"
+            f"🔥 **CPU:** {cpu} cores
+"
+            f"🧊 **OS:** {os_type}
+"
+            f"📦 **Container Name:** {container_name}
+"
+            f"⌚ **Expiry:** {expiry_date if expiry_date else 'None'}"
+        ),
         color=0x2400ff
     )
     await interaction.followup.send(embed=embed)
-    
-    # Select image based on OS type
+
     image = get_docker_image_for_os(os_type)
-    
+
     try:
-        # Create container with resource limits
         container_id = subprocess.check_output([
-            "docker", "run", "-itd", 
-            "--privileged", 
+            "docker", "run", "-itd",
+            "--privileged",
             "--cap-add=ALL",
             f"--memory={ram}g",
             f"--cpus={cpu}",
-            "--hostname=zxnodes", "--name", container_name,
+            "--hostname=zxnodes",
+            "--name", container_name,
             image
         ]).strip().decode('utf-8')
     except subprocess.CalledProcessError as e:
@@ -936,8 +946,10 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         return
 
     try:
-        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_name, "tmate", "-F",
-                                                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        exec_cmd = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_name, "tmate", "-F",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
     except Exception as e:
         error_embed = discord.Embed(
             title="❌ Error",
@@ -945,79 +957,59 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
             color=0x2400ff
         )
         await interaction.followup.send(embed=error_embed)
-        
-        # Clean up container
         subprocess.run(["docker", "stop", container_name], check=False)
         subprocess.run(["docker", "rm", container_name], check=False)
         return
 
     ssh_session_line = await capture_ssh_session_line(exec_cmd)
     if ssh_session_line:
-        # Add to database with extended information
         add_to_database(
-            user, 
-            container_name, 
-            ssh_session_line, 
-            ram_limit=ram, 
-            cpu_limit=cpu, 
+            user, container_name, ssh_session_line,
+            ram_limit=ram, cpu_limit=cpu,
             creator=str(interaction.user),
             expiry=expiry_date,
             os_type=os_type_to_display_name(os_type)
         )
-        
-        # Create a DM embed with detailed information
+
         dm_embed = discord.Embed(
-            description=f"**✅ VPS created successfully. Check your DM for details.**",
+            description="✅ VPS created successfully. Check your DM for details.",
             color=0x2400ff
         )
-        
-        
         dm_embed.add_field(name="🔑 SSH Connection Command", value=f"```{ssh_session_line}```", inline=False)
         dm_embed.add_field(name="💾 RAM Allocation", value=f"{ram}GB", inline=True)
         dm_embed.add_field(name="🔥 CPU Cores", value=f"{cpu} cores", inline=True)
         dm_embed.add_field(name="🧊 Container Name", value=container_name, inline=False)
-        dm_embed.add_field(name="💾 Storage", value=f"10000 GB (Shared storage)", inline=True)
-        dm_embed.add_field(name="🔒 Password", value="zxnodes", inline=False)
-        
+        dm_embed.add_field(name="💾 Storage", value="10000 GB (Shared storage)", inline=True)
+        dm_embed.add_field(name="🔒 Password", value="lpnodes", inline=False)
         dm_embed.set_footer(text="Keep this information safe and private!")
-        
-        # Try to send DM to target user
+
         target_user_obj = await bot.fetch_user(int(user_id))
-        
         try:
             await target_user_obj.send(embed=dm_embed)
-            
-            # Public success message
             success_embed = discord.Embed(
-                title="**⛈️ VM WAS CREATE**",
-                description=f"** 🎉 VPS instance has been created for <@{user_id}>. They should check their DMs for connection details.**",
+                title="⛈️ VM CREATED",
+                description=f"🎉 VPS instance has been created for <@{user_id}>. Check DMs for connection details.",
                 color=0x2400ff
             )
             await interaction.followup.send(embed=success_embed)
-            
         except discord.Forbidden:
-            # If DMs are closed
             warning_embed = discord.Embed(
-                title="**🔍 Cannot Send DM**",
-                description=f"**VPS has been created, but I couldn't send a DM with the connection details to <@{user_id}>. Please enable DMs from server members.**",
+                title="🔍 Cannot Send DM",
+                description=f"VPS created, but I couldn't DM <@{user_id}>. Please enable DMs from server members.",
                 color=0x2400ff
             )
             warning_embed.add_field(name="🔑 SSH Connection Command", value=f"```{ssh_session_line}```", inline=False)
             await interaction.followup.send(embed=warning_embed)
     else:
-        # Clean up container if SSH session couldn't be established
-        try:
-            subprocess.run(["docker", "stop", container_name], check=False)
-            subprocess.run(["docker", "rm", container_name], check=False)
-        except Exception:
-            pass
-        
+        subprocess.run(["docker", "stop", container_name], check=False)
+        subprocess.run(["docker", "rm", container_name], check=False)
         error_embed = discord.Embed(
             title="❌ Deployment Failed",
-            description="Failed to establish SSH session. The container has been cleaned up. Please try again.",
+            description="Failed to establish SSH session. Container cleaned up. Please try again.",
             color=0x2400ff
         )
         await interaction.followup.send(embed=error_embed)
+
 
 def os_type_to_display_name(os_type):
     """Convert OS type to display name"""
@@ -1256,7 +1248,7 @@ async def sendvps(
     embed.add_field(name="🧬 Full Combo", value=f"```{fullcombo}```", inline=False)
     embed.add_field(name="💾 RAM", value=f"{ram} GB", inline=True)
     embed.add_field(name="🔥 CPU", value=f"{cpu} cores", inline=True)
-    embed.set_footer(text="🔐 Safe your details | Powered by LP NODES")
+    embed.set_footer(text="🔐 Safe your details | Powered by ZX NODES")
 
     try:
         await user.send(embed=embed)
