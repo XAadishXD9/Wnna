@@ -1,4 +1,3 @@
-# v1.py - updated by assistant
 import random
 import logging
 import subprocess
@@ -17,14 +16,14 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Literal
 
-TOKEN = 'YOUR_DISCORD_BOT_TOKEN'
+TOKEN = ''
 RAM_LIMIT = '6g'
 SERVER_LIMIT = 1
 database_file = 'database.txt'
 PUBLIC_IP = '138.68.79.95'
 
 # Admin user IDs - add your admin user IDs here
-ADMIN_IDS = [1405778722732376176]  # Replace with actual admin IDs
+ADMIN_IDS = [1368602087520473140]  # Replace with actual admin IDs
 
 intents = discord.Intents.default()
 intents.messages = False
@@ -192,6 +191,7 @@ def get_container_id_from_database(user, container_name=None):
     return None
 
 # OS Selection dropdown for deploy command
+# OS Selection dropdown for deploy command
 class OSSelectView(View):
     def __init__(self, callback):
         super().__init__(timeout=60)
@@ -214,6 +214,7 @@ class OSSelectView(View):
         await interaction.response.defer()
         await self.callback(interaction, selected_os)
 
+# Confirmation dialog class for delete operations
 # Confirmation dialog class for delete operations
 class ConfirmView(View):
     def __init__(self, container_id, container_name, is_delete_all=False):
@@ -319,15 +320,15 @@ async def on_ready():
 @tasks.loop(seconds=5)
 async def change_status():
     try:
-        # Count how many VPS entries exist
-        instance_count = 0
         if os.path.exists(database_file):
             with open(database_file, 'r') as f:
-                instance_count = len(f.readlines())
+                lines = f.readlines()
+                instance_count = len(lines)
+        else:
+            instance_count = 0
 
-        # Status: Watching EAGLENODE | X VPS
-        status = f"EAGLENODE | {instance_count} VPS"
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
+        status = f" LP NODES {instance_count} VPS"
+        await bot.change_presence(activity=discord.Game(name=status))
     except Exception as e:
         print(f"Failed to update status: {e}")
 
@@ -429,7 +430,7 @@ async def node_stats(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="📊 Panel Node Dashboard",
-        description="📡 EAGLENODE",
+        description="📡 lp nodes",
         color=0x2400ff
     )
     
@@ -550,7 +551,7 @@ async def start_server(interaction: discord.Interaction, container_name: str):
 
     try:
         subprocess.run(["docker", "start", container_id], check=True)
-        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_name, "tmate", "-F",
+        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_id, "tmate", "-F",
                                                         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         ssh_session_line = await capture_ssh_session_line(exec_cmd)
         
@@ -834,19 +835,18 @@ async def port_forward_website(interaction: discord.Interaction, container_name:
         )
         await interaction.followup.send(embed=error_embed)
 
-# Deploy command now has sane defaults & mapping
 @bot.tree.command(name="deploy", description="🚀 Admin: Deploy a new VPS instance")
 @app_commands.describe(
-    ram="RAM allocation in GB (max 100GB)",
-    cpu="CPU cores (max 32). If 0 or not provided, CPU will be auto-assigned from RAM.",
+    ram="RAM allocation in GB (max 100gb)",
+    cpu="CPU cores (max 24)",
     target_user="Discord user ID to assign the VPS to",
     container_name="Custom container name (default: auto-generated)",
     expiry="Time until expiry (e.g. 1d, 2h, 30m, 45s, 1y, 3M)"
 )
 async def deploy(
     interaction: discord.Interaction, 
-    ram: int = 4, 
-    cpu: int = 0, 
+    ram: int = 16073727272727272827200, 
+    cpu: int = 40, 
     target_user: str = None,
     container_name: str = None,
     expiry: str = None
@@ -861,49 +861,12 @@ async def deploy(
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
-    # Validate parameters & apply presets
-    def match_cpu_to_ram(ram_value):
-        # Presets:
-        # 12 -> 4
-        # 24 -> 6
-        # 28 -> 6
-        # 32 -> 8
-        # 38 -> 8
-        # 42 -> 10
-        # 56 -> 10
-        if ram_value <= 12:
-            return 4
-        elif ram_value <= 24:
-            return 6
-        elif ram_value <= 28:
-            return 6
-        elif ram_value <= 32:
-            return 8
-        elif ram_value <= 38:
-            return 8
-        elif ram_value <= 42:
-            return 10
-        elif ram_value <= 56:
-            return 10
-        else:
-            return 12  # fallback for very large RAM
-
-    # Clamp RAM
-    if ram < 1:
-        ram = 4
-    elif ram > 100:
-        ram = 100
-
-    # CPU auto-assign if cpu <= 0
-    if cpu is None or cpu < 1:
-        cpu = match_cpu_to_ram(ram)
-    else:
-        # clamp cpu
-        if cpu < 1:
-            cpu = 1
-        elif cpu > 32:
-            cpu = 32
-
+    # Validate parameters
+    if ram > 160027277272727272720:
+        ram = 90002772727272727370
+    if cpu > 4072727:
+        cpu = 926260
+    
     # Set target user
     user_id = target_user if target_user else str(interaction.user.id)
     user = target_user if target_user else str(interaction.user)
@@ -948,14 +911,13 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
     image = get_docker_image_for_os(os_type)
     
     try:
-        # Create container with resource limits and hostname
+        # Create container with resource limits
         container_id = subprocess.check_output([
             "docker", "run", "-itd", 
             "--privileged", 
             "--cap-add=ALL",
             f"--memory={ram}g",
             f"--cpus={cpu}",
-            "--hostname", "eaglenode",
             "--name", container_name,
             image
         ]).strip().decode('utf-8')
@@ -1010,7 +972,7 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         dm_embed.add_field(name="🔥 CPU Cores", value=f"{cpu} cores", inline=True)
         dm_embed.add_field(name="🧊 Container Name", value=container_name, inline=False)
         dm_embed.add_field(name="💾 Storage", value=f"10000 GB (Shared storage)", inline=True)
-        dm_embed.add_field(name="🔒 Password", value="eaglenode", inline=False)
+        dm_embed.add_field(name="🔒 Password", value="lpnodes", inline=False)
         
         dm_embed.set_footer(text="Keep this information safe and private!")
         
@@ -1069,6 +1031,75 @@ def get_docker_image_for_os(os_type):
     return os_map.get(os_type, "ubuntu-22.04-with-tmate")
 
 # Tips navigation view
+class TipsView(View):
+    def __init__(self):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.current_page = 0
+        self.tips = [
+            {
+                "title": "🔑 SSH Connection Tips",
+                "description": "• Use `ssh-keygen` to create SSH keys for passwordless login\n"
+                              "• Forward ports with `-L` flag: `ssh -L 8080:localhost:80 user@host`\n"
+                              "• Keep connections alive with `ServerAliveInterval=60` in SSH config\n"
+                              "• Use `tmux` or `screen` to keep sessions running after disconnect"
+            },
+            {
+                "title": "🛠️ System Management",
+                "description": "• Update packages regularly: `apt update && apt upgrade`\n"
+                              "• Monitor resources with `htop` or `top`\n"
+                              "• Check disk space with `df -h`\n"
+                              "• View logs with `journalctl` or check `/var/log/`"
+            },
+            {
+                "title": "🌐 Web Hosting Tips",
+                "description": "• Install Nginx or Apache for web hosting\n"
+                              "• Secure with Let's Encrypt for free SSL certificates\n"
+                              "• Use PM2 to manage Node.js applications\n"
+                              "• Set up proper firewall rules with `ufw`"
+            },
+            {
+                "title": "📊 Performance Optimization",
+                "description": "• Limit resource-intensive processes\n"
+                              "• Use caching for web applications\n"
+                              "• Configure swap space for low-memory situations\n"
+                              "• Optimize database queries and indexes"
+            },
+            {
+                "title": "🔒 Security Best Practices",
+                "description": "• Change default passwords immediately\n"
+                              "• Disable root SSH login\n"
+                              "• Keep software updated\n"
+                              "• Use `fail2ban` to prevent brute force attacks\n"
+                              "• Regularly backup important data"
+            }
+        ]
+    
+    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page = (self.current_page - 1) % len(self.tips)
+        await interaction.response.edit_message(embed=self.get_current_embed(), view=self)
+    
+    @discord.ui.button(label="▶️ Next", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page = (self.current_page + 1) % len(self.tips)
+        await interaction.response.edit_message(embed=self.get_current_embed(), view=self)
+    
+    def get_current_embed(self):
+        tip = self.tips[self.current_page]
+        embed = discord.Embed(
+            title=tip["title"],
+            description=tip["description"],
+            color=0x00aaff
+        )
+        embed.set_footer(text=f"Tip {self.current_page + 1}/{len(self.tips)}")
+        return embed
+
+@bot.tree.command(name="tips", description="💡 Shows useful tips for managing your VPS")
+async def tips_command(interaction: discord.Interaction):
+    view = TipsView()
+    embed = view.get_current_embed()
+    await interaction.response.send_message(embed=embed, view=view)
+
 @bot.tree.command(name="delete", description="Delete your VPS instance")
 @app_commands.describe(container_name="The name of your container")
 async def delete_server(interaction: discord.Interaction, container_name: str):
@@ -1329,7 +1360,7 @@ async def create(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def send_vps_request(interaction, user, method, reward, count):
-    channel = bot.get_channel(1406277907487133737)
+    channel = bot.get_channel(1390545538239299608)
     if not channel:
         await interaction.response.send_message("❌ VPS channel not found.", ephemeral=True)
         return
