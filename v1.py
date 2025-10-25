@@ -1,3 +1,7 @@
+# zxnodes_fixed.py
+# ✅ Fixed version with proper RAM/CPU validation to prevent Docker errors (exit code 125)
+# ✅ Includes better error messages for debugging
+
 # 🌟 Import Libraries 🌟
 import random
 import logging
@@ -26,7 +30,7 @@ PUBLIC_IP = '138.68.79.95'
 
 # Admin user IDs - add your admin user IDs here
 # 👑 Admin user IDs
-ADMIN_IDS = [1405778722732376176]  # Replace with actual admin IDs
+ADMIN_IDS = [1405778722732376176 , 1273245674531717156]  # Replace with actual admin IDs
 
 intents = discord.Intents.default()
 intents.messages = False
@@ -435,7 +439,7 @@ async def node_stats(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="📊 Panel Node Dashboard",
-        description="📡 Zx nodes",
+        description="📡 ZX NODES",
         color=0x2400ff
     )
     
@@ -901,41 +905,70 @@ async def deploy(
 
 
 async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, container_name, expiry_date):
-    if not ram or ram <= 0:
-        ram = 1
-    if not cpu or cpu <= 0:
-        cpu = 1
+    # Accept 0 as "no limit". Otherwise enforce safe bounds.
+    try:
+        ram = int(ram)
+    except (ValueError, TypeError):
+        ram = 4  # default if invalid
+
+    try:
+        cpu = int(cpu)
+    except (ValueError, TypeError):
+        cpu = 2  # default if invalid
+
+    # If ram == 0 => no memory flag (no limit). If non-zero, clamp to 1..100.
+    if ram != 0:
+        ram = max(1, min(ram, 100))  # 1–100 GB
+    # If cpu == 0 => no cpu flag (no limit). If non-zero, clamp to 1..24.
+    if cpu != 0:
+        cpu = max(1, min(cpu, 24))   # 1–24 cores
+
+    # Prepare response embed
+    ram_display = "0" if ram == 0 else f"{ram}GB"
+    cpu_display = "0" if cpu == 0 else f"{cpu} cores"
 
     embed = discord.Embed(
         title="⚙️ Creating VM",
-        description=(
-            f"💾 **RAM:** {ram}GB
-"
-            f"🔥 **CPU:** {cpu} cores
-"
-            f"🧊 **OS:** {os_type}
-"
-            f"📦 **Container Name:** {container_name}
-"
-            f"⌚ **Expiry:** {expiry_date if expiry_date else 'None'}"
-        ),
+        description=f"""**💾 RAM:** {ram_display}
+**🔥 CPU:** {cpu_display}
+🧊 **OS:** {os_type}
+🧊 **Container owner:** {user}
+⌚ **Expiry:** {expiry_date if expiry_date else 'None'}""",
         color=0x2400ff
     )
     await interaction.followup.send(embed=embed)
 
+    # Choose image
     image = get_docker_image_for_os(os_type)
 
-    try:
-        container_id = subprocess.check_output([
+    # Build docker run command dynamically
+    docker_args = [
+        "docker", "run", "-itd",
+        "--privileged",
+        "--cap-add=ALL",
+        "--hostname=zxnodes",
+        "--name", container_name,
+        image
+    ]
+
+    # Insert resource flags only if non-zero (0 means "no limit")
+    if ram != 0 or cpu != 0:
+        docker_args = [
             "docker", "run", "-itd",
             "--privileged",
             "--cap-add=ALL",
-            f"--memory={ram}g",
-            f"--cpus={cpu}",
             "--hostname=zxnodes",
             "--name", container_name,
-            image
-        ]).strip().decode('utf-8')
+        ]
+        if ram != 0:
+            docker_args.insert(-2, f"--memory={ram}g")
+        if cpu != 0:
+            docker_args.insert(-2, f"--cpus={cpu}")
+        docker_args.append(image)
+
+    # Create container
+    try:
+        container_id = subprocess.check_output(docker_args).strip().decode('utf-8')
     except subprocess.CalledProcessError as e:
         error_embed = discord.Embed(
             title="❌ Error",
@@ -946,10 +979,8 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         return
 
     try:
-        exec_cmd = await asyncio.create_subprocess_exec(
-            "docker", "exec", container_name, "tmate", "-F",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
+        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_name, "tmate", "-F",
+                                                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     except Exception as e:
         error_embed = discord.Embed(
             title="❌ Error",
@@ -964,38 +995,41 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
     ssh_session_line = await capture_ssh_session_line(exec_cmd)
     if ssh_session_line:
         add_to_database(
-            user, container_name, ssh_session_line,
-            ram_limit=ram, cpu_limit=cpu,
+            user,
+            container_name,
+            ssh_session_line,
+            ram_limit=(None if ram == 0 else ram),
+            cpu_limit=(None if cpu == 0 else cpu),
             creator=str(interaction.user),
             expiry=expiry_date,
             os_type=os_type_to_display_name(os_type)
         )
 
         dm_embed = discord.Embed(
-            description="✅ VPS created successfully. Check your DM for details.",
+            description=f"**✅ VPS created successfully. Check your DM for details.**",
             color=0x2400ff
         )
         dm_embed.add_field(name="🔑 SSH Connection Command", value=f"```{ssh_session_line}```", inline=False)
-        dm_embed.add_field(name="💾 RAM Allocation", value=f"{ram}GB", inline=True)
-        dm_embed.add_field(name="🔥 CPU Cores", value=f"{cpu} cores", inline=True)
+        dm_embed.add_field(name="💾 RAM Allocation", value=ram_display, inline=True)
+        dm_embed.add_field(name="🔥 CPU Cores", value=cpu_display, inline=True)
         dm_embed.add_field(name="🧊 Container Name", value=container_name, inline=False)
-        dm_embed.add_field(name="💾 Storage", value="10000 GB (Shared storage)", inline=True)
-        dm_embed.add_field(name="🔒 Password", value="lpnodes", inline=False)
+        dm_embed.add_field(name="💾 Storage", value=f"10000 GB (Shared storage)", inline=True)
+        dm_embed.add_field(name="🔒 Password", value="zxnodes", inline=False)
         dm_embed.set_footer(text="Keep this information safe and private!")
 
-        target_user_obj = await bot.fetch_user(int(user_id))
         try:
+            target_user_obj = await bot.fetch_user(int(user_id))
             await target_user_obj.send(embed=dm_embed)
             success_embed = discord.Embed(
-                title="⛈️ VM CREATED",
-                description=f"🎉 VPS instance has been created for <@{user_id}>. Check DMs for connection details.",
+                title="**⛈️ VM WAS CREATE**",
+                description=f"** 🎉 VPS instance has been created for <@{user_id}>. They should check their DMs for connection details.**",
                 color=0x2400ff
             )
             await interaction.followup.send(embed=success_embed)
         except discord.Forbidden:
             warning_embed = discord.Embed(
-                title="🔍 Cannot Send DM",
-                description=f"VPS created, but I couldn't DM <@{user_id}>. Please enable DMs from server members.",
+                title="**🔍 Cannot Send DM**",
+                description=f"**VPS has been created, but I couldn't send a DM with the connection details to <@{user_id}>. Please enable DMs from server members.**",
                 color=0x2400ff
             )
             warning_embed.add_field(name="🔑 SSH Connection Command", value=f"```{ssh_session_line}```", inline=False)
@@ -1005,11 +1039,10 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         subprocess.run(["docker", "rm", container_name], check=False)
         error_embed = discord.Embed(
             title="❌ Deployment Failed",
-            description="Failed to establish SSH session. Container cleaned up. Please try again.",
+            description="Failed to establish SSH session. The container has been cleaned up. Please try again.",
             color=0x2400ff
         )
         await interaction.followup.send(embed=error_embed)
-
 
 def os_type_to_display_name(os_type):
     """Convert OS type to display name"""
@@ -1357,7 +1390,7 @@ async def create(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def send_vps_request(interaction, user, method, reward, count):
-    channel = bot.get_channel(1390545538239299608)
+    channel = bot.get_channel(1406277907487133737)
     if not channel:
         await interaction.response.send_message("❌ VPS channel not found.", ephemeral=True)
         return
