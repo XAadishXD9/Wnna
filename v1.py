@@ -1,3 +1,4 @@
+# 🌟 Import Libraries 🌟
 import random
 import logging
 import subprocess
@@ -16,6 +17,7 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Literal
 
+# 🔑 Configuration 🔑
 TOKEN = ''
 RAM_LIMIT = '6g'
 SERVER_LIMIT = 1
@@ -23,16 +25,19 @@ database_file = 'database.txt'
 PUBLIC_IP = '138.68.79.95'
 
 # Admin user IDs - add your admin user IDs here
-ADMIN_IDS = [1368602087520473140]  # Replace with actual admin IDs
+# 👑 Admin user IDs
+ADMIN_IDS = [1405778722732376176 , 1273245674531717156]  # Replace with actual admin IDs
 
 intents = discord.Intents.default()
 intents.messages = False
 intents.message_content = False
 
+# 🤖 Bot Setup 🤖
 bot = commands.Bot(command_prefix='/', intents=intents)
 client = docker.from_env()
 
 # Helper functions
+# 🛠️ Helper Functions 🛠️
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
@@ -191,7 +196,6 @@ def get_container_id_from_database(user, container_name=None):
     return None
 
 # OS Selection dropdown for deploy command
-# OS Selection dropdown for deploy command
 class OSSelectView(View):
     def __init__(self, callback):
         super().__init__(timeout=60)
@@ -214,7 +218,6 @@ class OSSelectView(View):
         await interaction.response.defer()
         await self.callback(interaction, selected_os)
 
-# Confirmation dialog class for delete operations
 # Confirmation dialog class for delete operations
 class ConfirmView(View):
     def __init__(self, container_id, container_name, is_delete_all=False):
@@ -311,6 +314,7 @@ class ConfirmView(View):
         for child in self.children:
             child.disabled = True
 
+# 🎉 Events 🎉
 @bot.event
 async def on_ready():
     change_status.start()
@@ -332,6 +336,7 @@ async def change_status():
     except Exception as e:
         print(f"Failed to update status: {e}")
 
+# 📜 Commands 📜
 @bot.tree.command(name="nodedmin", description="📊 Admin: Lists all VPSs, their details, and SSH commands")
 async def nodedmin(interaction: discord.Interaction):
     if not is_admin(interaction.user.id):
@@ -430,7 +435,7 @@ async def node_stats(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="📊 Panel Node Dashboard",
-        description="📡 lp nodes",
+        description="📡 ZX NODES",
         color=0x2400ff
     )
     
@@ -918,7 +923,7 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
             "--cap-add=ALL",
             f"--memory={ram}g",
             f"--cpus={cpu}",
-            "--name", container_name,
+            "--hostname=zxnodes", "--name", container_name,
             image
         ]).strip().decode('utf-8')
     except subprocess.CalledProcessError as e:
@@ -972,7 +977,7 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         dm_embed.add_field(name="🔥 CPU Cores", value=f"{cpu} cores", inline=True)
         dm_embed.add_field(name="🧊 Container Name", value=container_name, inline=False)
         dm_embed.add_field(name="💾 Storage", value=f"10000 GB (Shared storage)", inline=True)
-        dm_embed.add_field(name="🔒 Password", value="lpnodes", inline=False)
+        dm_embed.add_field(name="🔒 Password", value="zxnodes", inline=False)
         
         dm_embed.set_footer(text="Keep this information safe and private!")
         
