@@ -924,8 +924,8 @@ async def deploy_with_os(interaction, os_type, ram, cpu, user_id, user, containe
         cpu = max(1, min(cpu, 24))   # 1–24 cores
 
     # Prepare response embed
-    ram_display = "0" if ram == 0 else f"{ram}GB"
-    cpu_display = "0" if cpu == 0 else f"{cpu} cores"
+    ram_display = "0 RAM" if ram == 0 else f"{ram}GB"
+    cpu_display = "0 RAM" if cpu == 0 else f"{cpu} cores"
 
     embed = discord.Embed(
         title="⚙️ Creating VM",
